@@ -1,0 +1,4 @@
+# Solo pacchetti puro-Python, nessuna compilazione richiesta.
+# Compatibile con qualunque versione di Python, 32 o 64 bit.
+flask==3.0.3
+requests==2.32.3
