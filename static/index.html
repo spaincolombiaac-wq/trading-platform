@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<title>Trading Dashboard — Paper Trading</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0e1117; --panel: #161b22; --border: #2a2f3a;
+    --green: #26a69a; --red: #ef5350; --text: #e6edf3; --muted: #8b949e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .status-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px;
+    padding: 16px 20px;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+  .card .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  #chart { margin: 0 20px; border: 1px solid var(--border); border-radius: 8px; }
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 20px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .panel-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--muted); }
+  .controls { display: flex; gap: 10px; align-items: center; padding: 0 20px 16px; flex-wrap: wrap; }
+  input, select {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 8px; border-radius: 6px; font-size: 13px;
+  }
+  button {
+    background: var(--green); color: #fff; border: none; padding: 8px 16px;
+    border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;
+  }
+  button.stop { background: var(--red); }
+  .log-line { font-family: monospace; font-size: 11px; padding: 3px 0; color: var(--muted); }
+  .log-error { color: var(--red); }
+  .log-warning { color: #d29922; }
+  .scroll { max-height: 260px; overflow-y: auto; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📈 Trading Platform — Paper Trading (BTC/ETH short-term)</h1>
+  <div><span id="dot" class="status-dot" style="background:#888"></span><span id="conn-status">connessione...</span></div>
+</header>
+
+<div class="controls">
+  <label>Symbol: <select id="symbol"><option>BTCUSDT</option><option>ETHUSDT</option></select></label>
+  <label>Timeframe: <select id="timeframe"><option value="1m">1m</option><option value="3m">3m</option><option value="5m" selected>5m</option><option value="15m">15m</option></select></label>
+  <label>Capitale: <input id="capital" type="number" value="1000" style="width:80px"></label>
+  <label>Risk/trade %: <input id="risk" type="number" value="1" step="0.1" style="width:60px"></label>
+  <label>SL %: <input id="sl" type="number" value="0.8" step="0.1" style="width:60px"></label>
+  <label>TP %: <input id="tp" type="number" value="1.5" step="0.1" style="width:60px"></label>
+  <label>Trailing %: <input id="trail" type="number" value="0.5" step="0.1" style="width:60px"></label>
+  <button onclick="saveConfig()">Salva config</button>
+  <button id="btn-start" onclick="startBot()">▶ Avvia bot (paper)</button>
+  <button id="btn-stop" class="stop" onclick="stopBot()">■ Ferma bot</button>
+</div>
+
+<div class="grid">
+  <div class="card"><div class="label">Saldo (cash)</div><div class="value" id="balance">—</div></div>
+  <div class="card"><div class="label">Equity totale</div><div class="value" id="equity">—</div></div>
+  <div class="card"><div class="label">P&L Giornaliero</div><div class="value" id="daily-pnl">—</div></div>
+  <div class="card"><div class="label">Prezzo attuale</div><div class="value" id="price">—</div></div>
+  <div class="card"><div class="label">Trade oggi</div><div class="value" id="trades-today">—</div></div>
+</div>
+
+<div id="chart" style="height:380px;"></div>
+
+<div class="panels">
+  <div class="card">
+    <div class="panel-title">Posizione aperta</div>
+    <div id="open-trade">Nessuna posizione aperta</div>
+  </div>
+  <div class="card">
+    <div class="panel-title">Log eventi</div>
+    <div class="scroll" id="logs"></div>
+  </div>
+</div>
+
+<div style="padding: 0 20px 30px;">
+  <div class="card">
+    <div class="panel-title">Storico operazioni</div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Simbolo</th><th>Lato</th><th>Entry</th><th>Exit</th><th>Qty</th><th>PnL</th><th>PnL%</th><th>Motivo</th><th>Chiuso</th></tr></thead>
+        <tbody id="trades-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "";
+let chart, candleSeries, ema9Series, ema21Series;
+
+function initChart() {
+  chart = LightweightCharts.createChart(document.getElementById('chart'), {
+    layout: { background: { color: '#0e1117' }, textColor: '#e6edf3' },
+    grid: { vertLines: { color: '#2a2f3a' }, horzLines: { color: '#2a2f3a' } },
+    timeScale: { timeVisible: true, secondsVisible: false },
+  });
+  candleSeries = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
+  ema9Series = chart.addLineSeries({ color: '#f0b90b', lineWidth: 1 });
+  ema21Series = chart.addLineSeries({ color: '#3b82f6', lineWidth: 1 });
+}
+
+async function loadCandles() {
+  const symbol = document.getElementById('symbol').value;
+  const tf = document.getElementById('timeframe').value;
+  const res = await fetch(`${API}/api/candles?symbol=${symbol}&timeframe=${tf}&limit=150`);
+  const data = await res.json();
+  const candles = data.map(d => ({ time: Math.floor(new Date(d.open_time).getTime()/1000), open: d.open, high: d.high, low: d.low, close: d.close }));
+  const ema9 = data.map(d => ({ time: Math.floor(new Date(d.open_time).getTime()/1000), value: d.ema9 }));
+  const ema21 = data.map(d => ({ time: Math.floor(new Date(d.open_time).getTime()/1000), value: d.ema21 }));
+  candleSeries.setData(candles);
+  ema9Series.setData(ema9);
+  ema21Series.setData(ema21);
+}
+
+function fmt(n) { return n === null || n === undefined ? '—' : Number(n).toLocaleString('it-IT', {maximumFractionDigits: 2}); }
+
+function renderStatus(s) {
+  document.getElementById('balance').textContent = '$' + fmt(s.balance);
+  const eqEl = document.getElementById('equity');
+  eqEl.textContent = '$' + fmt(s.equity);
+  document.getElementById('price').textContent = s.current_price ? '$' + fmt(s.current_price) : '—';
+  document.getElementById('trades-today').textContent = s.trades_today;
+
+  const pnlEl = document.getElementById('daily-pnl');
+  pnlEl.textContent = (s.daily_pnl >= 0 ? '+$' : '-$') + fmt(Math.abs(s.daily_pnl));
+  pnlEl.className = 'value ' + (s.daily_pnl >= 0 ? 'pos' : 'neg');
+
+  const otEl = document.getElementById('open-trade');
+  if (s.open_trade) {
+    const t = s.open_trade;
+    otEl.innerHTML = `<b>${t.side.toUpperCase()}</b> ${t.symbol} — qty ${fmt(t.quantity)} @ $${fmt(t.entry_price)}<br><span style="color:var(--muted);font-size:12px">aperta: ${t.opened_at}</span>`;
+  } else {
+    otEl.textContent = 'Nessuna posizione aperta';
+  }
+
+  document.getElementById('dot').style.background = s.bot_active ? '#26a69a' : '#888';
+}
+
+async function loadTrades() {
+  const res = await fetch(`${API}/api/trades`);
+  const trades = await res.json();
+  const body = document.getElementById('trades-body');
+  body.innerHTML = trades.map(t => `
+    <tr>
+      <td>${t.symbol}</td><td>${t.side}</td>
+      <td>$${fmt(t.entry_price)}</td><td>${t.exit_price ? '$'+fmt(t.exit_price) : '—'}</td>
+      <td>${fmt(t.quantity)}</td>
+      <td class="${t.pnl >= 0 ? 'pos' : 'neg'}">${t.pnl !== null ? (t.pnl>=0?'+':'')+fmt(t.pnl) : '—'}</td>
+      <td class="${t.pnl_pct >= 0 ? 'pos' : 'neg'}">${t.pnl_pct !== null ? fmt(t.pnl_pct)+'%' : '—'}</td>
+      <td>${t.exit_reason || '—'}</td>
+      <td style="color:var(--muted)">${t.closed_at ? new Date(t.closed_at).toLocaleString('it-IT') : '—'}</td>
+    </tr>`).join('');
+}
+
+async function loadLogs() {
+  const res = await fetch(`${API}/api/logs?limit=50`);
+  const logs = await res.json();
+  document.getElementById('logs').innerHTML = logs.map(l =>
+    `<div class="log-line log-${l.level}">[${new Date(l.created_at).toLocaleTimeString('it-IT')}] ${l.category}: ${l.message}</div>`
+  ).join('');
+}
+
+async function saveConfig() {
+  const body = {
+    symbol: document.getElementById('symbol').value,
+    timeframe: document.getElementById('timeframe').value,
+    max_capital: parseFloat(document.getElementById('capital').value),
+    risk_per_trade_pct: parseFloat(document.getElementById('risk').value),
+    stop_loss_pct: parseFloat(document.getElementById('sl').value),
+    take_profit_pct: parseFloat(document.getElementById('tp').value),
+    trailing_stop_pct: parseFloat(document.getElementById('trail').value),
+  };
+  await fetch(`${API}/api/config`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  loadCandles();
+  alert('Configurazione salvata');
+}
+
+async function startBot() {
+  await fetch(`${API}/api/bot/start`, { method: 'POST' });
+}
+async function stopBot() {
+  await fetch(`${API}/api/bot/stop`, { method: 'POST' });
+}
+
+async function refreshAll() {
+  try {
+    const res = await fetch(`${API}/api/status`);
+    const data = await res.json();
+    renderStatus(data);
+    document.getElementById('conn-status').textContent = 'connesso';
+    loadTrades();
+    loadLogs();
+  } catch (e) {
+    document.getElementById('conn-status').textContent = 'backend non raggiungibile';
+    document.getElementById('dot').style.background = '#ef5350';
+  }
+}
+
+initChart();
+loadCandles();
+loadTrades();
+loadLogs();
+refreshAll();
+setInterval(refreshAll, 5000);
+setInterval(loadCandles, 30000);
+</script>
+</body>
+</html>
